@@ -4,17 +4,18 @@ from sqlalchemy.orm import sessionmaker
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
-from review_senti.preprocess import parse_review4
+from review_summary.preprocess import parse_review4
+from review_senti.preprocess import parse_review3
 from review_senti.model_0709 import test_sentences
-from review_summary.preprocess import parse_review3
 import numpy as np
+from flask import Flask, jsonify 
 
 # 데이터베이스 설정
 username = 'hrd'
 password = '1234'
 hostname = '10.125.121.212'
 port = '3306'
-database_name = 'job'
+database_name = 'job2'
 
 # SQLAlchemy 설정
 DATABASE_URI = f'mysql+pymysql://{username}:{password}@{hostname}:{port}/{database_name}'
@@ -23,46 +24,51 @@ Base = declarative_base()
 
 # 데이터베이스 모델 정의
 class FinalData(Base):
-    __tablename__ = 'final_data'
-    id = Column(Integer, primary_key=True)
-    ncs_num = Column(String(50), nullable=False)
-    course_id = Column(Integer, nullable=False)
+    __tablename__ = 'maindata'
+    # id = Column(Integer, primary_key=True)
+    course_id = Column(Integer, primary_key=True)
     course_name = Column(String(255), nullable=False)
+    ncs_num = Column(String(50), nullable=False)
+    edu_institute = Column(String(255),nullable=False)
+    training_type = Column(String(255),nullable=False)
     reviews = Column(Text, nullable=False)
-    goals = Column(Text, nullable=False)
+    address2 = Column(String(255),nullable=False)
+    # goals = Column(Text, nullable=False)
 
 class SummaryReview(Base):
-    __tablename__ = 'summary_review_copy'
-    id = Column(Integer, primary_key=True)
-    course_id = Column(Integer, nullable=False)
+    __tablename__ = 'summary_review3'
+    course_id = Column(Integer, ForeignKey('maindata.course_id'),primary_key=True,nullable=False)
     course_name = Column(String(500), nullable=False)
     summary_review = Column(String(5000), nullable=False)
-
-class CourseSenti(Base):
-    __tablename__ = 'courses_senti'
-    id = Column(Integer, primary_key=True)
     ncs_num = Column(String(50), nullable=False)
-    course_id = Column(String(50), nullable=False, unique=True)
-    course_name = Column(String(255), nullable=False)
+    edu_institute = Column(String(255),nullable=False)
+    training_type = Column(String(255),nullable=False)
+    address2 = Column(String(255),nullable=False)
+    
 
 class Review(Base):
-    __tablename__ = 'reviews_senti'
-    id = Column(Integer, primary_key=True)
-    course_id = Column(String(50), ForeignKey('courses_senti.course_id'), nullable=False)
+    __tablename__ = 'sentiment_result3'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    course_id = Column(Integer, nullable=False)
+    course_name = Column(String(255), nullable=False)
+    ncs_num = Column(String(8), nullable=False)
+    address = Column(String(255),nullable=False)
+    training_type = Column(String(255),nullable=False)
+    edu_institute = Column(String(255),nullable=False)
     round = Column(Integer, nullable=False)
     review = Column(Text, nullable=False)
-    result = Column(Numeric(10, 5))
+    result = Column(Numeric(10, 1))
 
 # 세션 생성
 Session = sessionmaker(bind=engine)
-session = Session()
+Base.metadata.create_all(engine)
 
 # Prompt
 prompt = ChatPromptTemplate.from_template(
     ''' 
     다음 문장은 직업훈련강의에 대한 수강후기들이다. 이문장의 주요특징을 잘 선별해서 요약하여 소감을 한문장으로 나타낸다.
     주요특징에는 직업, 훈련내용, 강의내용, 교사, 배운점, 배울점, 앞으로의 방향들 같은 직업과 미래에 관련된 내용들이 있을 것이다.
-    한글을 준수하자.
+    한글을 준수하자. 특성을 세밀히 파악하고 그것을 적절히 요약해서 후기를 남기는 어투여야해. 한문장으로 요약이야.
     : {Sentence}'''
 )
 
@@ -70,56 +76,103 @@ prompt = ChatPromptTemplate.from_template(
 model = ChatOllama(model="gemma2:9b", temperature=0)
 chain = prompt | model | StrOutputParser()  # 문자열 출력 파서를 사용합니다.
 
-# 요약 처리 함수
-def process_summaries():
-    courses = session.query(FinalData).all()
-    for course in courses:
-        reviews_text = course.reviews
-        if reviews_text.strip() == "{}":
-            summary_result = SummaryReview(
-                course_name=course.course_name,
-                course_id=course.id,
-                summary_review='수강후기가 없습니다.'
-            )
-        else:
+
+def chat_summary():
+    session = Session()
+    # SummaryReview 테이블에서 마지막으로 처리된 course_id를 가져옵니다.
+    last_processed_record = session.query(SummaryReview).order_by(SummaryReview.course_id.desc()).first()
+    last_processed_id = last_processed_record.course_id if last_processed_record else None
+    print(f"마지막으로 처리된 course_id: {last_processed_id}")
+
+    if last_processed_id is None:
+        courses = session.query(FinalData).all()
+    else:
+        courses = session.query(FinalData).filter(FinalData.course_id > last_processed_id).all()
+    
+    print(f"처리할 강의 수: {len(courses)}")
+
+    try:
+        for course in courses:
             try:
-                allreview = parse_review3(reviews_text)
-                print("ai에 input될 문장: ", allreview)
-                if not allreview:
+                # 리뷰 텍스트를 파싱하여 개별 리뷰를 추출
+                reviews_text = course.reviews
+                print(f"강의 {course.course_id}의 reviews_text: {reviews_text}")
+
+                if reviews_text.strip() == "{}":
                     summary_result = SummaryReview(
                         course_name=course.course_name,
-                        course_id=course.id,
+                        course_id=course.course_id,
+                        ncs_num = course.ncs_num,
+                        edu_institute = course.edu_institute,
+                        training_type = course.training_type,
+                        address2 = course.address2,
                         summary_review='수강후기가 없습니다.'
                     )
+                    session.add(summary_result)
                 else:
-                    response = chain.invoke({"Sentence": allreview})
-                    print("ai의 답변: ", response)
-                    summary_result = SummaryReview(
-                        course_name=course.course_name,
-                        course_id=course.id,
-                        summary_review=response
-                    )
-            except Exception as e:
-                print("에러발생:", str(e))
-                summary_result = SummaryReview(
-                    course_name=course.course_name,
-                    course_id=course.id,
-                    summary_review='수강후기가 없습니다.'
-                )
-        session.add(summary_result)
-    session.commit()
-    print("요약 처리 완료!")
+                    allreview = parse_review4(reviews_text)
+                    print("ai에 input될 문장: ", allreview)
 
-# 감성 분석 처리 함수
+                    if not allreview:
+                        summary_result = SummaryReview(
+                            course_name=course.course_name,
+                            course_id=course.course_id,
+                            summary_review='수강후기가 없습니다.',
+                            ncs_num = course.ncs_num,
+                            edu_institute = course.edu_institute,
+                            training_type = course.training_type,
+                            address2 = course.address2
+                        )
+                        session.add(summary_result)
+                    else:
+                        response = chain.invoke({"Sentence": allreview})
+                        print("ai의 답변: ", response)
+                        summary_result = SummaryReview(
+                            course_name=course.course_name,
+                            course_id=course.course_id,
+                            summary_review=response,
+                            ncs_num = course.ncs_num,
+                            edu_institute = course.edu_institute,
+                            training_type = course.training_type,
+                            address2 = course.address2
+                        )
+                        session.add(summary_result)
+
+                session.commit()
+                print(f"강의 {course.course_id}의 데이터베이스 커밋 성공")
+            except Exception as e:
+                print(f"강의 {course.course_id} 처리 중 에러 발생: {str(e)}")
+                session.rollback()  # 에러 발생 시 롤백하고 다음 강의로 진행
+    except Exception as e:
+        print(f"전체 처리 중 에러 발생: {str(e)}")
+    session.close()
+    print("message : Sentiments processed and stored successfully")
+
+
+## 감성 분석 처리 함수
 def process_sentiments():
-    courses = session.query(FinalData).all()
+    session = Session()
+
+    # 마지막으로 처리된 course_id를 가져오기
+    last_processed_course = session.query(Review.course_id).order_by(Review.course_id.desc()).first()
+    last_course_id = last_processed_course[0] if last_processed_course else None
+
+    # 마지막으로 처리된 course_id 다음의 course들을 가져오기
+    if last_course_id:
+        courses = session.query(FinalData).filter(FinalData.course_id > last_course_id).all()
+    else:
+        courses = session.query(FinalData).all()
+
     for course in courses:
-        existing_course = session.query(CourseSenti).filter_by(course_id=course.course_id).first()
+        existing_course = session.query(Review).filter_by(course_id=course.course_id).first()
         if not existing_course:
-            course_entry = CourseSenti(
+            course_entry = Review(
                 ncs_num=course.ncs_num,
                 course_id=course.course_id,
                 course_name=course.course_name,
+                training_type = course.training_type,
+                edu_institute = course.edu_institute,
+                address = course.address2
             )
             session.add(course_entry)
 
@@ -127,6 +180,11 @@ def process_sentiments():
         if reviews_text.strip() == "{}":
             review_entry = Review(
                 course_id=course.course_id,
+                course_name=course.course_name,
+                ncs_num=course.ncs_num,
+                training_type=course.training_type,  
+                edu_institute=course.edu_institute,
+                address = course.address2,
                 round=0,
                 review='수강후기가 없습니다.',
                 result=None
@@ -135,10 +193,15 @@ def process_sentiments():
             print(f"{course.course_name}에 수강후기가 없습니다.")
         else:
             try:
-                all_reviews = parse_review4(reviews_text)
+                all_reviews = parse_review3(reviews_text)
                 if not all_reviews:
                     review_entry = Review(
                         course_id=course.course_id,
+                        course_name=course.course_name,  
+                        ncs_num=course.ncs_num,  
+                        training_type=course.training_type, 
+                        edu_institute=course.edu_institute,  
+                        address = course.address2,
                         round=0,
                         review='수강후기가 없습니다.',
                         result=None
@@ -155,6 +218,11 @@ def process_sentiments():
                             print(f"회차: {round_num}, 리뷰: {review}, 예측값: {prediction}")
                             review_entry = Review(
                                 course_id=course.course_id,
+                                course_name=course.course_name,  
+                                ncs_num=course.ncs_num,  
+                                training_type=course.training_type,  
+                                edu_institute=course.edu_institute,  
+                                address = course.address2,
                                 round=int(round_num),
                                 review=review,
                                 result=prediction
@@ -169,5 +237,8 @@ def process_sentiments():
     print("감성 분석 처리 완료!")
 
 if __name__ == '__main__':
-    # process_summaries()
+    chat_summary()
+    print("Starting sentiment analysis process...")
     process_sentiments()
+    print("Process completed.")
+    

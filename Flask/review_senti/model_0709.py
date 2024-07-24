@@ -2,28 +2,19 @@
 import torch
 from transformers import BertTokenizer
 import tensorflow as tf
-from keras.preprocessing.sequence import pad_sequences
+from torch.nn.utils.rnn  import pad_sequence
 # 데이터 전처리
-# model = torch.load("modelHRDreview_sentiment_model.pt")
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print('There are %d GPU(s) available.' % torch.cuda.device_count())
-    print('We will use the GPU:', torch.cuda.get_device_name(0))
-else:
-    device = torch.device("cpu")
-    print('No GPU available, using the CPU instead.')
 
-
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print('GPU로드', device)
 model = torch.load("modelHRDreview_sentiment_model.pt")
 model.to(device)
 model.eval()
-# torch.save(model.state_dict(), "modelHRDreview_sentiment_model.pt")
 
-
-tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased', do_lower_case=False)
 # 입력 데이터 변환
 def convert_input_data(sentences):
     # BERT의 토크나이저로 문장을 토큰으로 분리
+    tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased', do_lower_case=False)
     tokenized_texts = [tokenizer.tokenize(sent) for sent in sentences]
 
     # 입력 토큰의 최대 시퀀스 길이
@@ -32,31 +23,32 @@ def convert_input_data(sentences):
     # 토큰을 숫자 인덱스로 변환
     input_ids = [tokenizer.convert_tokens_to_ids(x) for x in tokenized_texts]
 
+    # 문장을 텐서로 변환
+    input_ids = [torch.tensor(seq) for seq in input_ids]
+
     # 문장을 MAX_LEN 길이에 맞게 자르고, 모자란 부분을 패딩 0으로 채움
-    input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
+    input_ids = pad_sequence(input_ids, batch_first=True, padding_value=0)
+
+    # 길이가 MAX_LEN을 넘는 경우 잘라냄
+    input_ids = input_ids[:, :MAX_LEN]
+
     # 어텐션 마스크 초기화
-    attention_masks = []
-    for seq in input_ids:
-        seq_mask = [float(i>0) for i in seq]
-        attention_masks.append(seq_mask)
+    attention_masks = torch.tensor([[float(i > 0) for i in seq] for seq in input_ids], dtype=torch.float)
 
-    # 데이터를 파이토치의 텐서로 변환
-    inputs = torch.tensor(input_ids,dtype=torch.long)
-    masks = torch.tensor(attention_masks, dtype=torch.float)
+    return input_ids, attention_masks
 
-    return inputs, masks
-#잠깐만 ㅠㅠㅠ
 def test_sentences(sentences):
+   
 
     # 평가모드로 변경
     model.eval()
 
     # 문장을 입력 데이터로 변환
-    inputs, masks = convert_input_data(sentences)
+    input_ids, attention_masks = convert_input_data(sentences)
 
     # 데이터를 GPU에 넣음
-    b_input_ids = inputs.to(device)
-    b_input_mask = masks.to(device)
+    b_input_ids = input_ids.to(device)
+    b_input_mask = attention_masks.to(device)
 
     # 그래디언트 계산 안함
     with torch.no_grad():

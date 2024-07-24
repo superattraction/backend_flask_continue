@@ -34,7 +34,7 @@ def om(num):
 
     # Call the ocrpdf function
     data = ocrpdf(pdf_file_path)
-
+    print("파일주소야",pdf_file_path)
     # Clean up the downloaded PDF file
     os.remove(pdf_file_path)
 

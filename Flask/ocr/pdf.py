@@ -1,16 +1,28 @@
 from PyPDF2 import PdfReader
-def ocrpdf(PDF_FILE_PATH):
-    reader = PdfReader(PDF_FILE_PATH)
-    pages = reader.pages
-    text=""
-    for page in pages:
-        sub = page.extract_text()
-        text +=sub
-    data=text.replace("\n"," ").split("■",4)
+import re
+def ocrpdf(pdf_file_path):
+# PDF 파일 열기
+    with open(pdf_file_path, 'rb') as file:
+        reader = PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text()
 
-    자격=data[1].split('(능력단위코드)')[1]
-    split_data=data[2].split('(능력단위코드)')
-    훈련 = split_data[1].strip() + ' ' + split_data[2].strip()
-    경력=data[3].split('※')[0]
-    input = {1:자격, 2:훈련, 3:경력}
-    return input
+    # 텍스트를 '■' 기준으로 분할
+    sections = re.split(r'■', text)
+
+    # 데이터 저장을 위한 딕셔너리 초기화
+    data = {1: "", 2: "", 3: ""}
+
+    # 각 섹션을 해당 키에 할당
+    for section in sections:
+        if section.startswith("자격"):
+            data[1] = section.strip()
+        elif section.startswith("훈련"):
+            data[2] = section.strip()
+        elif section.startswith("경력"):
+            data[3] = section.strip()
+
+    # 결과 딕셔너리 출력
+    return data
+

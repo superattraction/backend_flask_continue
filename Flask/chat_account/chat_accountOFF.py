@@ -1,17 +1,12 @@
 from flask import jsonify
-from flask_chatbot import chatbot
+from chatbot.chatbot_job import chatbot_j
 import logging
-import requests
-def pdfOff(): 
+from urllib.parse import unquote
+def pdfOff(data): 
     try:
-        data = requests.get_json()
-        if data is None or not isinstance(data, str):
-            logging.error("No input")
-            return jsonify({"Result: False"}),400
-        
-        user_input = data
+        user_input = unquote(data)
         print(f"user_input내용: {user_input}")
-        chat_responses = chatbot(user_input)
+        chat_responses = chatbot_j(user_input)
         logging.info("Analysis successful for str")
         return jsonify({"response": chat_responses}),200
     except Exception as e:
